@@ -1,34 +1,37 @@
 import os
 import google.generativeai as genai
+import requests
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, CallbackContext, CommandHandler
+from flask import Flask, request, jsonify
+from telegram import Update, Bot
+from telegram.ext import Dispatcher
 
-# Load API keys from .env
+# Load environment variables
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Vercel URL
 
-# Configure Google Gemini API
+# Initialize Flask app
+app = Flask(__name__)
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
+dispatcher = Dispatcher(bot, None, use_context=True)
+
+# Configure Google Gemini AI
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-pro")
 
 # Dictionary to store user memory
 user_memory = {}
 
-async def start(update: Update, context: CallbackContext) -> None:
-    """Send a welcome message when the user starts the bot."""
-    user_id = update.message.chat_id
-    user_memory[user_id] = []  # Initialize memory for the new user
-    welcome_message = (
-        "👋 Welcome to the Setthi Chatbot!\n\n"
-        "I can assist you with various topics. Just send me a message and I'll respond.\n"
-        "Let's chat! 😊"
-    )
-    await update.message.reply_text(welcome_message)
+def set_webhook():
+    """Set the Telegram bot webhook to Vercel URL"""
+    webhook_url = f"{WEBHOOK_URL}/webhook"
+    response = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook?url={webhook_url}")
+    print("Webhook Set Response:", response.json())
 
-async def chat(update: Update, context: CallbackContext) -> None:
-    """Handle user messages and remember context."""
+def process_message(update: Update):
+    """Process user messages and generate responses using Google Gemini"""
     user_id = update.message.chat_id
     user_message = update.message.text
 
@@ -40,7 +43,7 @@ async def chat(update: Update, context: CallbackContext) -> None:
     user_memory[user_id].append(f"You: {user_message}")
 
     # Prepare conversation history
-    conversation_history = "\n".join(user_memory[user_id][-5:])  # Keep last 5 exchanges
+    conversation_history = "\n".join(user_memory[user_id][-5:])  # Keep last 5 messages
 
     # Generate AI response
     response = model.generate_content(conversation_history)
@@ -49,19 +52,25 @@ async def chat(update: Update, context: CallbackContext) -> None:
     # Append bot response to memory
     user_memory[user_id].append(f"Bot: {bot_reply}")
 
-    await update.message.reply_text(bot_reply)
+    bot.send_message(chat_id=user_id, text=bot_reply)
 
-def main():
-    """Run the Telegram bot."""
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    """Handle incoming Telegram messages via webhook"""
+    update = Update.de_json(request.get_json(), bot)
+    process_message(update)
+    return jsonify({"status": "ok"}), 200
 
-    # Handlers
-    app.add_handler(CommandHandler("start", start))  # Handle /start command
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))  # Handle messages
+@app.route("/set_webhook", methods=["GET"])
+def set_webhook_route():
+    """Endpoint to manually set the webhook"""
+    set_webhook()
+    return jsonify({"message": "Webhook set successfully!"}), 200
 
-    # Start polling
-    print("Gemini Telegram bot is running...")
-    app.run_polling()
+@app.route("/", methods=["GET"])
+def home():
+    """Root endpoint for Vercel health check"""
+    return "✅ Telegram Bot is Running on Vercel!", 200
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    set_webhook()
