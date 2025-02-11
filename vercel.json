@@ -1,15 +1,14 @@
 {
     "version": 2,
-    "builds": [
-      {
-        "src": "setthichat.py",
-        "use": "@vercel/python"
+    "functions": {
+      "api/setthichat.py": {
+        "runtime": "@vercel/python"
       }
-    ],
+    },
     "routes": [
       {
-        "src": "/.*",
-        "dest": "setthichat.py"
+        "src": "/(.*)",
+        "dest": "api/setthichat.py"
       }
     ]
   }
